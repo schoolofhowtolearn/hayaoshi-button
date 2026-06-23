@@ -334,6 +334,28 @@ let watchedBuzzRound = -1;
 let currentBuzzRef = null;
 let lastRankingLenHost = 0;
 let lastRankingLenPlayer = 0;
+let localArmed = false;
+let scheduledStartTime = -1;
+let armTimerId = null;
+function clearArmTimer() {
+  if (armTimerId) { clearInterval(armTimerId); armTimerId = null; }
+}
+function scheduleLocalArm(startTime) {
+  clearArmTimer();
+  localArmed = false;
+  scheduledStartTime = startTime;
+  if (!startTime) return;
+  const check = () => {
+    if (Date.now() >= startTime) {
+      localArmed = true;
+      clearArmTimer();
+      updatePlayerUI();
+    }
+  };
+  check();
+  if (!localArmed) armTimerId = setInterval(check, 30);
+}
+let lastPlayerData = null;
 
 const screens = {
   select: document.getElementById('screen-select'),
@@ -565,52 +587,63 @@ function listenPlayer() {
   roomRef.on('value', (snap) => {
     const data = snap.val();
     if (!data) return;
-    const buzzBtn = document.getElementById('btnBuzz');
-    const statusEl = document.getElementById('playerStatus');
+    lastPlayerData = data;
 
     if (data.round !== currentRound) {
       currentRound = data.round;
       myBuzzedRound = -1;
+    }
+    if (data.startTime !== scheduledStartTime) {
+      scheduleLocalArm(data.startTime);
     }
 
     const ranking = data.ranking || [];
     if (ranking.length > lastRankingLenPlayer) soundDing();
     lastRankingLenPlayer = ranking.length;
 
-    statusEl.className = 'status' + (data.finished && data.winner ? ' winner' : '');
-    if (data.finished && data.winner) {
-      statusEl.textContent = data.winner.id === myId ? '🎉 あなたが正解です！' : `${data.winner.name} が正解しました`;
-      buzzBtn.disabled = true;
-    } else if (data.finished && !data.winner) {
-      statusEl.textContent = '😢 今回は正解者なし';
-      buzzBtn.disabled = true;
-    } else if (ranking.length > 0) {
-      const judgedIndex = data.judgedIndex || 0;
-      const myRank = ranking.findIndex(r => r.id === myId);
-      if (myRank === judgedIndex) {
-        statusEl.textContent = '🙋 あなたの解答を判定中です…';
-      } else if (myRank >= 0 && myRank < judgedIndex) {
-        statusEl.textContent = '不正解でした。結果を待っています';
-      } else if (myRank > judgedIndex) {
-        statusEl.textContent = '⏳ 順番を待っています…';
-      } else {
-        statusEl.textContent = '🙋 判定中…結果をお待ちください';
-      }
-      buzzBtn.disabled = true;
-    } else if (myBuzzedRound === currentRound) {
-      statusEl.textContent = '送信しました…結果を待っています';
-      buzzBtn.disabled = true;
-    } else if (data.armed && Date.now() >= data.startTime) {
-      statusEl.textContent = '🟢 押せます！';
-      buzzBtn.disabled = false;
-    } else {
-      statusEl.textContent = '⏳ 待機中…';
-      buzzBtn.disabled = true;
-    }
-
+    updatePlayerUI();
     renderRanking('playerRanking', 'playerRankingPanel', data);
     renderScores('playerScores', data);
   });
+}
+
+function updatePlayerUI() {
+  const data = lastPlayerData;
+  if (!data) return;
+  const buzzBtn = document.getElementById('btnBuzz');
+  const statusEl = document.getElementById('playerStatus');
+  const ranking = data.ranking || [];
+
+  statusEl.className = 'status' + (data.finished && data.winner ? ' winner' : '');
+  if (data.finished && data.winner) {
+    statusEl.textContent = data.winner.id === myId ? '🎉 あなたが正解です！' : `${data.winner.name} が正解しました`;
+    buzzBtn.disabled = true;
+  } else if (data.finished && !data.winner) {
+    statusEl.textContent = '😢 今回は正解者なし';
+    buzzBtn.disabled = true;
+  } else if (ranking.length > 0) {
+    const judgedIndex = data.judgedIndex || 0;
+    const myRank = ranking.findIndex(r => r.id === myId);
+    if (myRank === judgedIndex) {
+      statusEl.textContent = '🙋 あなたの解答を判定中です…';
+    } else if (myRank >= 0 && myRank < judgedIndex) {
+      statusEl.textContent = '不正解でした。結果を待っています';
+    } else if (myRank > judgedIndex) {
+      statusEl.textContent = '⏳ 順番を待っています…';
+    } else {
+      statusEl.textContent = '🙋 判定中…結果をお待ちください';
+    }
+    buzzBtn.disabled = true;
+  } else if (myBuzzedRound === currentRound) {
+    statusEl.textContent = '送信しました…結果を待っています';
+    buzzBtn.disabled = true;
+  } else if (localArmed && data.round > 0) {
+    statusEl.textContent = '🟢 押せます！';
+    buzzBtn.disabled = false;
+  } else {
+    statusEl.textContent = '⏳ 待機中…';
+    buzzBtn.disabled = true;
+  }
 }
 
 document.getElementById('btnBuzz').onclick = () => {
@@ -623,6 +656,9 @@ document.getElementById('btnBuzz').onclick = () => {
 };
 
 document.getElementById('btnExit').onclick = () => {
+  clearArmTimer();
+  scheduledStartTime = -1;
+  localArmed = false;
   if (!roomCode) { showScreen('select'); return; }
   db.ref(`rooms/${roomCode}/players/${myId}`).remove();
   db.ref(`rooms/${roomCode}/scores/${myId}`).remove();
