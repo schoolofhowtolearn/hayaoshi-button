@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>早押しボタン（Firebase版）</title>
+
+<!-- ▼▼▼ ここにFirebaseの設定を貼り付けてください ▼▼▼
+  1. https://console.firebase.google.com/ でプロジェクトを作成（無料）
+  2. 左メニュー「構築」→「Realtime Database」→「データベースを作成」
+     - ロケーションは任意、開始モードは「テストモード」でOK（学習・身内利用向け）
+  3. 左メニューの「プロジェクトの概要」横の歯車 →「プロジェクトの設定」
+     →下にスクロールし「アプリを追加」→ </> (ウェブ) を選択 → アプリ名を入力
+  4. 表示される firebaseConfig の中身を、下のFIREBASE_CONFIGにコピペ
+  5. Realtime Database の「ルール」タブで、まずは下記のような簡易ルールにして公開:
+     {
+       "rules": {
+         ".read": true,
+         ".write": true
+       }
+     }
+     ※身内・短期利用向けの簡易設定です。長く公開する場合はルールを絞ってください。
+-->
+<script>
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyBcaFJoK8tVHpKQ-ZJn901-UitT6yDUCQQ",
+    authDomain: "hayaoshi-button-efc33.firebaseapp.com",
+    databaseURL: "https://hayaoshi-button-efc33-default-rtdb.firebaseio.com",
+    projectId: "hayaoshi-button-efc33",
+  };
+</script>
+<!-- ▲▲▲ ここまで ▲▲▲ -->
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: linear-gradient(160deg, #FFF4D6 0%, #FFE2F2 45%, #DFF7FF 100%);
+    color: #22223a;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    position: relative;
+    overflow-x: hidden;
+  }
+  .splat {
+    position: absolute;
+    z-index: 0;
+    clip-path: path('M100,0 C150,10 190,50 180,100 C200,140 160,190 110,180 C70,200 20,160 30,110 C0,70 50,10 100,0 Z');
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    position: relative;
+    z-index: 1;
+  }
+  @media (min-width: 700px) {
+    .card { max-width: 480px; }
+    .resp-title { font-size: 2.4em !important; }
+    .resp-code { font-size: 3.6em !important; }
+  }
+  h1 {
+    font-size: 2em;
+    margin: 4px 0 0;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: 0.03em;
+    color: #FF3DAE;
+    transform: rotate(-3deg);
+    text-shadow: 3px 0 0 #fff, -3px 0 0 #fff, 0 3px 0 #fff, 0 -3px 0 #fff,
+                 3px 3px 0 #fff, -3px -3px 0 #fff, 3px -3px 0 #fff, -3px 3px 0 #fff;
+  }
+  .sub, .sub-faint { font-weight: bold; color: #3a3a55; text-align: center; }
+  .sub-faint { font-size: 0.9em; opacity: 0.85; }
+  .or-line { font-weight: bold; color: #3a3a55; font-size: 0.85em; }
+  input {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    border: 3px solid #22223a;
+    font-size: 1em;
+    background: rgba(255,255,255,0.95);
+    color: #111;
+    text-align: center;
+    font-weight: bold;
+    outline: none;
+  }
+  button {
+    width: 100%;
+    padding: 16px;
+    border-radius: 14px;
+    border: 3px solid #22223a;
+    font-weight: 900;
+    font-size: 1.05em;
+    cursor: pointer;
+    font-style: italic;
+    letter-spacing: 0.02em;
+    box-shadow: 0 6px 0 #22223a;
+    transform: skewX(-2deg);
+    transition: transform 0.08s ease, filter 0.15s ease;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:active:not(:disabled) { transform: translateY(5px) skewX(-2deg); box-shadow: 0 0 0 #22223a; }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-orange { background: #FF8A00; color: #fff; }
+  .btn-teal { background: #00E5C8; color: #072b27; }
+  .btn-yellow { background: #FFE600; color: #2b2200; }
+  .btn-line { background: #06C755; color: #fff; }
+  .error { color: #FF3DAE; font-size: 0.85em; text-align: center; font-weight: bold; }
+  .code-box { text-align: center; margin: 8px 0 16px; }
+  .code-label { font-weight: bold; letter-spacing: 0.1em; color: #3a3a55; font-size: 0.85em; }
+  .code {
+    font-size: 3em;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    color: #FF8A00;
+    font-style: italic;
+    transform: rotate(-2deg);
+    display: inline-block;
+    text-shadow: 3px 0 0 #fff, -3px 0 0 #fff, 0 3px 0 #fff, 0 -3px 0 #fff, 3px 3px 0 #fff, -3px -3px 0 #fff;
+  }
+  .players-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 12px; min-height: 30px; }
+  .player-chip {
+    padding: 6px 16px;
+    border-radius: 999px;
+    font-size: 0.85em;
+    font-weight: 900;
+    color: #111;
+    border: 2px solid #22223a;
+    transform: rotate(-2deg);
+  }
+  .status { font-weight: 900; text-align: center; min-height: 1.6em; margin: 8px 0; color: #3a3a55; }
+  .status.winner {
+    color: #FF3DAE; font-size: 1.3em; font-style: italic;
+    text-shadow: 2px 0 0 #fff, -2px 0 0 #fff, 0 2px 0 #fff, 0 -2px 0 #fff;
+    animation: pop 0.35s ease;
+  }
+  @keyframes pop { 0% { transform: scale(0.7) rotate(-8deg); } 100% { transform: scale(1) rotate(-2deg); } }
+  .huge-btn {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: 40% 60% 55% 45% / 50% 45% 55% 50%;
+    border: 5px solid #22223a;
+    color: white;
+    font-size: 2.2em;
+    font-weight: 900;
+    font-style: italic;
+    box-shadow: 0 10px 0 #22223a;
+    text-shadow: 2px 0 0 #22223a, -2px 0 0 #22223a, 0 2px 0 #22223a, 0 -2px 0 #22223a;
+    background: #FF6B6B;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="splat" style="top:-40px;left:-50px;width:200px;height:200px;background:#FF8A00;transform:rotate(-10deg);opacity:.55;"></div>
+<div class="splat" style="bottom:-60px;right:-60px;width:240px;height:240px;background:#00E5C8;transform:rotate(25deg);opacity:.5;"></div>
+<div class="splat" style="top:20%;right:-40px;width:120px;height:120px;background:#FFE600;transform:rotate(60deg);opacity:.45;"></div>
+<div class="splat" style="bottom:15%;left:-30px;width:100px;height:100px;background:#FF3DAE;transform:rotate(-35deg);opacity:.45;"></div>
+
+<!-- 役割選択 -->
+<div class="card" id="screen-select">
+  <h1 class="resp-title">早押しボタン</h1>
+  <p class="sub">複数のスマホ・PCで一人一台ずつ使えます</p>
+  <button class="btn-orange" id="btnCreateRoom">進行役（ホスト）になる</button>
+  <div class="or-line">または</div>
+  <input id="inputJoinCode" placeholder="ルームコード（4桁）" maxlength="4" inputmode="numeric">
+  <input id="inputPlayerName" placeholder="あなたの名前" maxlength="12">
+  <button class="btn-teal" id="btnJoinRoom">プレイヤーとして参加</button>
+  <div class="error hidden" id="selectError"></div>
+</div>
+
+<!-- ホスト画面 -->
+<div class="card hidden" id="screen-host">
+  <h1 class="resp-title">進行役画面</h1>
+  <div class="code-box">
+    <div class="code-label">ルームコード</div>
+    <div class="code resp-code" id="hostCode"></div>
+  </div>
+  <button class="btn-line" id="btnShareLine">📱 LINEで参加者に送る</button>
+  <div class="players-list" id="hostPlayers"></div>
+  <div class="status" id="hostStatus">「開始」を押して問題をスタート</div>
+  <button class="btn-yellow" id="btnStartRound">開始（受付スタート）</button>
+</div>
+
+<!-- プレイヤー画面 -->
+<div class="card hidden" id="screen-player">
+  <div class="sub-faint" id="playerInfo"></div>
+  <div class="status" id="playerStatus">⏳ 待機中…</div>
+  <button class="huge-btn" id="btnBuzz" disabled>押す！</button>
+</div>
+
+<script>
+const COLORS = ['#FF6B6B','#4ecdc4','#ffd166','#6a89cc','#a29bfe','#55efc4','#fd79a8','#fab1a0'];
+function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
+function genId() { return Math.random().toString(36).slice(2, 10); }
+
+// Firebase 初期化
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.database();
+
+const myId = genId();
+let roomCode = '';
+let playerName = '';
+let currentRound = 0;
+let myBuzzedRound = -1;
+let buzzWatchRound = -1;
+
+const screens = {
+  select: document.getElementById('screen-select'),
+  host: document.getElementById('screen-host'),
+  player: document.getElementById('screen-player'),
+};
+function showScreen(name) {
+  Object.values(screens).forEach(s => s.classList.add('hidden'));
+  screens[name].classList.remove('hidden');
+}
+
+// ---------- ホスト ----------
+document.getElementById('btnCreateRoom').onclick = () => {
+  roomCode = genCode();
+  const initData = { round: 0, armed: false, startTime: 0, players: {}, winner: null };
+  db.ref('rooms/' + roomCode).set(initData).then(() => {
+    document.getElementById('hostCode').textContent = roomCode;
+    showScreen('host');
+    listenHost();
+  }).catch(() => {
+    showError('ルーム作成に失敗しました。Firebaseの設定を確認してください。');
+  });
+};
+
+function listenHost() {
+  const roomRef = db.ref('rooms/' + roomCode);
+  roomRef.on('value', (snap) => {
+    const data = snap.val();
+    if (!data) return;
+    currentRound = data.round || 0;
+
+    const playersDiv = document.getElementById('hostPlayers');
+    const players = data.players || {};
+    const ids = Object.keys(players);
+    if (ids.length === 0) {
+      playersDiv.innerHTML = '<div class="sub-faint">参加者がここに表示されます</div>';
+    } else {
+      playersDiv.innerHTML = ids.map((id, i) => {
+        const isWinner = data.winner && data.winner.id === id;
+        return `<span class="player-chip" style="background:${COLORS[i % COLORS.length]};${isWinner ? 'outline:3px solid #fff;' : ''}">${players[id]}</span>`;
+      }).join('');
+    }
+
+    const statusEl = document.getElementById('hostStatus');
+    statusEl.className = 'status' + (data.winner ? ' winner' : '');
+    if (data.winner) {
+      const sec = ((data.winner.time || 0) / 1000).toFixed(2);
+      statusEl.textContent = `🎉 ${data.winner.name} が一番早い！（${sec}秒）`;
+    } else if (data.armed) {
+      statusEl.textContent = '🟢 受付中！';
+    } else if (data.round > 0) {
+      statusEl.textContent = '⏳ まもなく受付開始…';
+    } else {
+      statusEl.textContent = '「開始」を押して問題をスタート';
+    }
+
+    document.getElementById('btnStartRound').textContent = data.round === 0 ? '開始（受付スタート）' : '次の問題へ';
+
+    if (data.armed && !data.winner) {
+      watchBuzzes(data.round, data.startTime, players);
+    }
+  });
+}
+
+function watchBuzzes(round, startTime, players) {
+  if (buzzWatchRound === round) return;
+  buzzWatchRound = round;
+  const buzzRef = db.ref(`rooms/${roomCode}/buzzes/${round}`);
+  buzzRef.on('value', (snap) => {
+    const buzzes = snap.val();
+    if (!buzzes) return;
+    const entries = Object.entries(buzzes);
+    if (entries.length === 0) return;
+    entries.sort((a, b) => a[1] - b[1]);
+    const [winnerId, winTime] = entries[0];
+    db.ref('rooms/' + roomCode).once('value').then((s) => {
+      const cur = s.val();
+      if (!cur || cur.winner || cur.round !== round) return;
+      const winnerName = (players && players[winnerId]) || (cur.players && cur.players[winnerId]) || '不明';
+      db.ref('rooms/' + roomCode).update({
+        armed: false,
+        winner: { id: winnerId, name: winnerName, time: winTime - startTime },
+      });
+    });
+    buzzRef.off();
+  });
+}
+
+document.getElementById('btnStartRound').onclick = () => {
+  const delay = 800 + Math.random() * 1500;
+  db.ref('rooms/' + roomCode).once('value').then((snap) => {
+    const cur = snap.val();
+    const round = (cur.round || 0) + 1;
+    const startTime = Date.now() + delay;
+    db.ref('rooms/' + roomCode).update({ round, armed: false, startTime, winner: null }).then(() => {
+      setTimeout(() => {
+        db.ref('rooms/' + roomCode).once('value').then((s2) => {
+          const cur2 = s2.val();
+          if (cur2 && cur2.round === round) {
+            db.ref('rooms/' + roomCode).update({ armed: true });
+          }
+        });
+      }, delay);
+    });
+  });
+};
+
+document.getElementById('btnShareLine').onclick = () => {
+  const text = `🔔 早押しクイズに参加しよう！\nルームコード: ${roomCode}\n\nこのページを開いて「プレイヤーとして参加」からコードと名前を入力してね。\n${location.href}`;
+  window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text), '_blank');
+};
+
+// ---------- プレイヤー ----------
+function showError(msg) {
+  const el = document.getElementById('selectError');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+document.getElementById('btnJoinRoom').onclick = () => {
+  const code = document.getElementById('inputJoinCode').value.trim();
+  const name = document.getElementById('inputPlayerName').value.trim();
+  if (!code || !name) { showError('コードと名前を入力してください'); return; }
+
+  db.ref('rooms/' + code).once('value').then((snap) => {
+    const data = snap.val();
+    if (!data) { showError('ルームが見つかりません。コードを確認してください'); return; }
+    roomCode = code;
+    playerName = name;
+    db.ref(`rooms/${roomCode}/players/${myId}`).set(name).then(() => {
+      document.getElementById('playerInfo').textContent = `ルーム ${roomCode} / ${name} さん`;
+      showScreen('player');
+      listenPlayer();
+    });
+  }).catch(() => showError('ルームの取得に失敗しました'));
+};
+
+function listenPlayer() {
+  const roomRef = db.ref('rooms/' + roomCode);
+  roomRef.on('value', (snap) => {
+    const data = snap.val();
+    if (!data) return;
+    const buzzBtn = document.getElementById('btnBuzz');
+    const statusEl = document.getElementById('playerStatus');
+
+    if (data.round !== currentRound) {
+      currentRound = data.round;
+      myBuzzedRound = -1;
+    }
+
+    statusEl.className = 'status' + (data.winner ? ' winner' : '');
+    if (data.winner) {
+      statusEl.textContent = data.winner.id === myId ? '🎉 あなたが一番早い！' : `${data.winner.name} が一番早い！`;
+      buzzBtn.disabled = true;
+    } else if (myBuzzedRound === currentRound) {
+      statusEl.textContent = '送信しました…結果を待っています';
+      buzzBtn.disabled = true;
+    } else if (data.armed && Date.now() >= data.startTime) {
+      statusEl.textContent = '🟢 押せます！';
+      buzzBtn.disabled = false;
+    } else {
+      statusEl.textContent = '⏳ 待機中…';
+      buzzBtn.disabled = true;
+    }
+  });
+}
+
+document.getElementById('btnBuzz').onclick = () => {
+  if (myBuzzedRound === currentRound) return;
+  myBuzzedRound = currentRound;
+  document.getElementById('btnBuzz').disabled = true;
+  document.getElementById('playerStatus').textContent = '送信しました…結果を待っています';
+  db.ref(`rooms/${roomCode}/buzzes/${currentRound}/${myId}`).set(Date.now());
+};
+</script>
+
+</body>
+</html>
