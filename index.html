@@ -116,6 +116,8 @@
   .btn-teal { background: #00E5C8; color: #072b27; }
   .btn-yellow { background: #FFE600; color: #2b2200; }
   .btn-line { background: #06C755; color: #fff; }
+  .btn-green { background: #2ecc71; color: #fff; }
+  .btn-red { background: #e74c3c; color: #fff; }
   .error { color: #FF3DAE; font-size: 0.85em; text-align: center; font-weight: bold; }
   .code-box { text-align: center; margin: 8px 0 16px; }
   .code-label { font-weight: bold; letter-spacing: 0.1em; color: #3a3a55; font-size: 0.85em; }
@@ -160,6 +162,66 @@
     background: #FF6B6B;
   }
   .hidden { display: none !important; }
+
+  .panel {
+    width: 100%;
+    background: rgba(255,255,255,0.7);
+    border: 3px solid #22223a;
+    border-radius: 14px;
+    padding: 10px 12px;
+    margin-top: 4px;
+  }
+  .panel-title {
+    font-weight: 900;
+    font-size: 0.85em;
+    margin-bottom: 6px;
+    color: #3a3a55;
+    letter-spacing: 0.05em;
+  }
+  .rank-item, .score-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 0.9em;
+  }
+  .rank-item + .rank-item, .score-item + .score-item { margin-top: 4px; }
+  .rank-num, .score-rank {
+    background: #22223a;
+    color: #fff;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8em;
+    flex-shrink: 0;
+  }
+  .rank-name, .score-name { flex: 1; text-align: left; }
+  .rank-time { opacity: 0.7; font-size: 0.85em; }
+  .rank-current { background: #FFE600; }
+  .rank-judged { opacity: 0.45; text-decoration: line-through; }
+  .score-stat { font-size: 0.85em; opacity: 0.85; }
+  .judge-row { display: flex; gap: 10px; width: 100%; }
+  .judge-row button { margin-top: 0; }
+  .exit-link {
+    background: none;
+    border: none;
+    box-shadow: none;
+    transform: none;
+    color: #3a3a55;
+    text-decoration: underline;
+    font-weight: bold;
+    font-size: 0.85em;
+    width: auto;
+    padding: 4px;
+    font-style: normal;
+  }
+  .exit-link:hover { filter: none; opacity: 0.7; }
+  .exit-link:active { transform: none; box-shadow: none; }
 </style>
 </head>
 <body>
@@ -191,7 +253,22 @@
   <button class="btn-line" id="btnShareLine">📱 LINEで参加者に送る</button>
   <div class="players-list" id="hostPlayers"></div>
   <div class="status" id="hostStatus">「開始」を押して問題をスタート</div>
+
+  <div class="panel hidden" id="hostRankingPanel">
+    <div class="panel-title">🔔 押した順番</div>
+    <div id="hostRanking"></div>
+  </div>
+
+  <div class="judge-row hidden" id="hostJudgeRow">
+    <button class="btn-green" id="btnCorrect">✅ 正解</button>
+    <button class="btn-red" id="btnWrong">❌ 不正解</button>
+  </div>
+
   <button class="btn-yellow" id="btnStartRound">開始（受付スタート）</button>
+
+  <div class="panel" id="hostScoresPanel">
+    <div id="hostScores"></div>
+  </div>
 </div>
 
 <!-- プレイヤー画面 -->
@@ -199,12 +276,50 @@
   <div class="sub-faint" id="playerInfo"></div>
   <div class="status" id="playerStatus">⏳ 待機中…</div>
   <button class="huge-btn" id="btnBuzz" disabled>押す！</button>
+
+  <div class="panel hidden" id="playerRankingPanel">
+    <div class="panel-title">🔔 押した順番</div>
+    <div id="playerRanking"></div>
+  </div>
+
+  <div class="panel" id="playerScoresPanel">
+    <div id="playerScores"></div>
+  </div>
+
+  <button class="exit-link" id="btnExit">← 退出する</button>
 </div>
 
 <script>
 const COLORS = ['#FF6B6B','#4ecdc4','#ffd166','#6a89cc','#a29bfe','#55efc4','#fd79a8','#fab1a0'];
 function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
 function genId() { return Math.random().toString(36).slice(2, 10); }
+
+// ---------- 音 ----------
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+  }
+  return audioCtx;
+}
+function beep(freq, dur, type, delay) {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime + (delay || 0);
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = type || 'sine';
+  o.frequency.value = freq;
+  g.gain.value = 0.22;
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur / 1000);
+  o.stop(t0 + dur / 1000 + 0.02);
+}
+function soundBuzz() { beep(1300, 140, 'square'); }
+function soundDing() { beep(1700, 100, 'sine'); }
+function soundCorrect() { beep(880, 120, 'sine'); beep(1320, 160, 'sine', 0.12); }
+function soundWrong() { beep(220, 280, 'sawtooth'); }
 
 // Firebase 初期化
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -215,7 +330,10 @@ let roomCode = '';
 let playerName = '';
 let currentRound = 0;
 let myBuzzedRound = -1;
-let buzzWatchRound = -1;
+let watchedBuzzRound = -1;
+let currentBuzzRef = null;
+let lastRankingLenHost = 0;
+let lastRankingLenPlayer = 0;
 
 const screens = {
   select: document.getElementById('screen-select'),
@@ -227,10 +345,52 @@ function showScreen(name) {
   screens[name].classList.remove('hidden');
 }
 
+function renderRanking(containerId, panelId, data) {
+  const panel = document.getElementById(panelId);
+  const el = document.getElementById(containerId);
+  const ranking = data.ranking || [];
+  if (ranking.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  const judgedIndex = data.judgedIndex || 0;
+  el.innerHTML = ranking.map((r, i) => {
+    const sec = (r.time / 1000).toFixed(2);
+    let cls = 'rank-item';
+    if (data.finished) {
+      if (data.winner && r.id === data.winner.id) cls += ' rank-current';
+      else cls += ' rank-judged';
+    } else if (i < judgedIndex) {
+      cls += ' rank-judged';
+    } else if (i === judgedIndex) {
+      cls += ' rank-current';
+    }
+    return `<div class="${cls}"><span class="rank-num">${i + 1}</span><span class="rank-name">${r.name}</span><span class="rank-time">${sec}秒</span></div>`;
+  }).join('');
+}
+
+function renderScores(containerId, data) {
+  const el = document.getElementById(containerId);
+  const players = data.players || {};
+  const scores = data.scores || {};
+  const ids = Object.keys(players);
+  if (ids.length === 0) { el.innerHTML = ''; return; }
+  const list = ids.map(id => ({
+    name: players[id],
+    correct: (scores[id] && scores[id].correct) || 0,
+    wrong: (scores[id] && scores[id].wrong) || 0,
+  }));
+  list.sort((a, b) => (b.correct - a.correct) || (a.wrong - b.wrong));
+  el.innerHTML = '<div class="panel-title">🏆 成績ランキング</div>' + list.map((p, i) =>
+    `<div class="score-item"><span class="score-rank">${i + 1}</span><span class="score-name">${p.name}</span><span class="score-stat">○${p.correct}　✕${p.wrong}</span></div>`
+  ).join('');
+}
+
 // ---------- ホスト ----------
 document.getElementById('btnCreateRoom').onclick = () => {
   roomCode = genCode();
-  const initData = { round: 0, armed: false, startTime: 0, players: {}, winner: null };
+  const initData = { round: 0, armed: false, startTime: 0, players: {}, scores: {}, winner: null, ranking: null, judgedIndex: 0, finished: false };
   db.ref('rooms/' + roomCode).set(initData).then(() => {
     document.getElementById('hostCode').textContent = roomCode;
     showScreen('host');
@@ -259,11 +419,19 @@ function listenHost() {
       }).join('');
     }
 
+    const ranking = data.ranking || [];
+    if (ranking.length > lastRankingLenHost) soundDing();
+    lastRankingLenHost = ranking.length;
+
     const statusEl = document.getElementById('hostStatus');
-    statusEl.className = 'status' + (data.winner ? ' winner' : '');
-    if (data.winner) {
+    statusEl.className = 'status' + (data.finished && data.winner ? ' winner' : '');
+    if (data.finished && data.winner) {
       const sec = ((data.winner.time || 0) / 1000).toFixed(2);
-      statusEl.textContent = `🎉 ${data.winner.name} が一番早い！（${sec}秒）`;
+      statusEl.textContent = `🎉 ${data.winner.name} が正解！（${sec}秒）`;
+    } else if (data.finished && !data.winner) {
+      statusEl.textContent = '😢 全員不正解…';
+    } else if (ranking.length > 0) {
+      statusEl.textContent = '🙋 判定してください';
     } else if (data.armed) {
       statusEl.textContent = '🟢 受付中！';
     } else if (data.round > 0) {
@@ -272,35 +440,67 @@ function listenHost() {
       statusEl.textContent = '「開始」を押して問題をスタート';
     }
 
+    renderRanking('hostRanking', 'hostRankingPanel', data);
+    renderScores('hostScores', data);
+
+    const judgeRow = document.getElementById('hostJudgeRow');
+    const showJudge = ranking.length > 0 && !data.finished && (data.judgedIndex || 0) < ranking.length;
+    judgeRow.classList.toggle('hidden', !showJudge);
+
     document.getElementById('btnStartRound').textContent = data.round === 0 ? '開始（受付スタート）' : '次の問題へ';
 
-    if (data.armed && !data.winner) {
-      watchBuzzes(data.round, data.startTime, players);
+    if (data.round > 0 && watchedBuzzRound !== data.round) {
+      watchBuzzes(data.round);
     }
   });
 }
 
-function watchBuzzes(round, startTime, players) {
-  if (buzzWatchRound === round) return;
-  buzzWatchRound = round;
-  const buzzRef = db.ref(`rooms/${roomCode}/buzzes/${round}`);
-  buzzRef.on('value', (snap) => {
+function watchBuzzes(round) {
+  if (currentBuzzRef) currentBuzzRef.off();
+  watchedBuzzRound = round;
+  currentBuzzRef = db.ref(`rooms/${roomCode}/buzzes/${round}`);
+  currentBuzzRef.on('value', (snap) => {
     const buzzes = snap.val();
     if (!buzzes) return;
-    const entries = Object.entries(buzzes);
-    if (entries.length === 0) return;
-    entries.sort((a, b) => a[1] - b[1]);
-    const [winnerId, winTime] = entries[0];
     db.ref('rooms/' + roomCode).once('value').then((s) => {
       const cur = s.val();
-      if (!cur || cur.winner || cur.round !== round) return;
-      const winnerName = (players && players[winnerId]) || (cur.players && cur.players[winnerId]) || '不明';
-      db.ref('rooms/' + roomCode).update({
-        armed: false,
-        winner: { id: winnerId, name: winnerName, time: winTime - startTime },
-      });
+      if (!cur || cur.round !== round) return;
+      const players = cur.players || {};
+      const entries = Object.entries(buzzes).sort((a, b) => a[1] - b[1]);
+      const ranking = entries.map(([id, t]) => ({ id, name: players[id] || '不明', time: t - cur.startTime }));
+      const updates = { ranking };
+      if (cur.armed) updates.armed = false;
+      db.ref('rooms/' + roomCode).update(updates);
     });
-    buzzRef.off();
+  });
+}
+
+document.getElementById('btnCorrect').onclick = () => judge(true);
+document.getElementById('btnWrong').onclick = () => judge(false);
+
+function judge(isCorrect) {
+  db.ref('rooms/' + roomCode).once('value').then((s) => {
+    const cur = s.val();
+    if (!cur || !cur.ranking || cur.finished) return;
+    const idx = cur.judgedIndex || 0;
+    if (idx >= cur.ranking.length) return;
+    const entry = cur.ranking[idx];
+    const pid = entry.id;
+    const curScore = (cur.scores && cur.scores[pid]) || { correct: 0, wrong: 0 };
+    const updates = {};
+    if (isCorrect) {
+      updates[`scores/${pid}/correct`] = (curScore.correct || 0) + 1;
+      updates.finished = true;
+      updates.winner = { id: pid, name: entry.name, time: entry.time };
+      soundCorrect();
+    } else {
+      updates[`scores/${pid}/wrong`] = (curScore.wrong || 0) + 1;
+      const nextIdx = idx + 1;
+      updates.judgedIndex = nextIdx;
+      if (nextIdx >= cur.ranking.length) updates.finished = true;
+      soundWrong();
+    }
+    db.ref('rooms/' + roomCode).update(updates);
   });
 }
 
@@ -310,7 +510,11 @@ document.getElementById('btnStartRound').onclick = () => {
     const cur = snap.val();
     const round = (cur.round || 0) + 1;
     const startTime = Date.now() + delay;
-    db.ref('rooms/' + roomCode).update({ round, armed: false, startTime, winner: null }).then(() => {
+    lastRankingLenHost = 0;
+    lastRankingLenPlayer = 0;
+    db.ref('rooms/' + roomCode).update({
+      round, armed: false, startTime, winner: null, ranking: null, judgedIndex: 0, finished: false,
+    }).then(() => {
       setTimeout(() => {
         db.ref('rooms/' + roomCode).once('value').then((s2) => {
           const cur2 = s2.val();
@@ -345,7 +549,10 @@ document.getElementById('btnJoinRoom').onclick = () => {
     if (!data) { showError('ルームが見つかりません。コードを確認してください'); return; }
     roomCode = code;
     playerName = name;
-    db.ref(`rooms/${roomCode}/players/${myId}`).set(name).then(() => {
+    const updates = {};
+    updates[`players/${myId}`] = name;
+    updates[`scores/${myId}`] = { correct: 0, wrong: 0 };
+    db.ref('rooms/' + roomCode).update(updates).then(() => {
       document.getElementById('playerInfo').textContent = `ルーム ${roomCode} / ${name} さん`;
       showScreen('player');
       listenPlayer();
@@ -366,9 +573,29 @@ function listenPlayer() {
       myBuzzedRound = -1;
     }
 
-    statusEl.className = 'status' + (data.winner ? ' winner' : '');
-    if (data.winner) {
-      statusEl.textContent = data.winner.id === myId ? '🎉 あなたが一番早い！' : `${data.winner.name} が一番早い！`;
+    const ranking = data.ranking || [];
+    if (ranking.length > lastRankingLenPlayer) soundDing();
+    lastRankingLenPlayer = ranking.length;
+
+    statusEl.className = 'status' + (data.finished && data.winner ? ' winner' : '');
+    if (data.finished && data.winner) {
+      statusEl.textContent = data.winner.id === myId ? '🎉 あなたが正解です！' : `${data.winner.name} が正解しました`;
+      buzzBtn.disabled = true;
+    } else if (data.finished && !data.winner) {
+      statusEl.textContent = '😢 今回は正解者なし';
+      buzzBtn.disabled = true;
+    } else if (ranking.length > 0) {
+      const judgedIndex = data.judgedIndex || 0;
+      const myRank = ranking.findIndex(r => r.id === myId);
+      if (myRank === judgedIndex) {
+        statusEl.textContent = '🙋 あなたの解答を判定中です…';
+      } else if (myRank >= 0 && myRank < judgedIndex) {
+        statusEl.textContent = '不正解でした。結果を待っています';
+      } else if (myRank > judgedIndex) {
+        statusEl.textContent = '⏳ 順番を待っています…';
+      } else {
+        statusEl.textContent = '🙋 判定中…結果をお待ちください';
+      }
       buzzBtn.disabled = true;
     } else if (myBuzzedRound === currentRound) {
       statusEl.textContent = '送信しました…結果を待っています';
@@ -380,6 +607,9 @@ function listenPlayer() {
       statusEl.textContent = '⏳ 待機中…';
       buzzBtn.disabled = true;
     }
+
+    renderRanking('playerRanking', 'playerRankingPanel', data);
+    renderScores('playerScores', data);
   });
 }
 
@@ -388,7 +618,20 @@ document.getElementById('btnBuzz').onclick = () => {
   myBuzzedRound = currentRound;
   document.getElementById('btnBuzz').disabled = true;
   document.getElementById('playerStatus').textContent = '送信しました…結果を待っています';
+  soundBuzz();
   db.ref(`rooms/${roomCode}/buzzes/${currentRound}/${myId}`).set(Date.now());
+};
+
+document.getElementById('btnExit').onclick = () => {
+  if (!roomCode) { showScreen('select'); return; }
+  db.ref(`rooms/${roomCode}/players/${myId}`).remove();
+  db.ref(`rooms/${roomCode}/scores/${myId}`).remove();
+  db.ref('rooms/' + roomCode).off();
+  roomCode = '';
+  myBuzzedRound = -1;
+  document.getElementById('inputJoinCode').value = '';
+  document.getElementById('inputPlayerName').value = '';
+  showScreen('select');
 };
 </script>
 
