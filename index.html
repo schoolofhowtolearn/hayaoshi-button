@@ -410,10 +410,26 @@ function scheduleLocalArm(startTime) {
   check();
   if (!localArmed) armTimerId = setInterval(check, 30);
 }
+let windowEndScheduledFor = -1;
+let windowEndTimerId = null;
+const BUZZ_WINDOW_MS = 60000;
+function scheduleWindowEnd(firstBuzzTime) {
+  if (windowEndScheduledFor === firstBuzzTime) return;
+  if (windowEndTimerId) clearTimeout(windowEndTimerId);
+  windowEndScheduledFor = firstBuzzTime;
+  const remain = Math.max(0, firstBuzzTime + BUZZ_WINDOW_MS - Date.now());
+  windowEndTimerId = setTimeout(() => { updatePlayerUI(); }, remain + 50);
+}
+function clearWindowTimer() {
+  if (windowEndTimerId) { clearTimeout(windowEndTimerId); windowEndTimerId = null; }
+  windowEndScheduledFor = -1;
+}
 let lastPlayerData = null;
 let amJoined = false;
 let ownPlayerRef = null;
-let finishedNotifiedRound = -1;
+let correctNotifiedRound = -1;
+let wrongNotifiedRound = -1;
+let wrongNotifiedUpTo = -1;
 
 const screens = {
   select: document.getElementById('screen-select'),
@@ -470,7 +486,7 @@ function renderScores(containerId, data) {
 // ---------- ホスト ----------
 document.getElementById('btnCreateRoom').onclick = () => {
   roomCode = genCode();
-  const initData = { round: 0, armed: false, startTime: 0, players: {}, scores: {}, winner: null, ranking: null, judgedIndex: 0, finished: false };
+  const initData = { round: 0, armed: false, startTime: 0, players: {}, scores: {}, winner: null, ranking: null, judgedIndex: 0, finished: false, firstBuzzTime: null };
   db.ref('rooms/' + roomCode).set(initData).then(() => {
     document.getElementById('hostCode').textContent = roomCode;
     showScreen('host');
@@ -511,7 +527,8 @@ function listenHost() {
     } else if (data.finished && !data.winner) {
       statusEl.textContent = '😢 全員不正解…';
     } else if (ranking.length > 0) {
-      statusEl.textContent = '🙋 判定してください';
+      const windowOpen = data.firstBuzzTime && (Date.now() - data.firstBuzzTime < 60000);
+      statusEl.textContent = windowOpen ? '🙋 判定してください（しばらく他の人も押せます）' : '🙋 判定してください';
     } else if (data.armed) {
       statusEl.textContent = '🟢 受付中！';
     } else if (data.round > 0) {
@@ -549,7 +566,7 @@ function watchBuzzes(round) {
       const entries = Object.entries(buzzes).sort((a, b) => a[1] - b[1]);
       const ranking = entries.map(([id, t]) => ({ id, name: players[id] || '不明', time: t - cur.startTime }));
       const updates = { ranking };
-      if (cur.armed) updates.armed = false;
+      if (!cur.firstBuzzTime) updates.firstBuzzTime = entries[0][1];
       db.ref('rooms/' + roomCode).update(updates);
     });
   });
@@ -623,7 +640,7 @@ document.getElementById('btnStartRound').onclick = () => {
     lastRankingLenHost = 0;
     lastRankingLenPlayer = 0;
     db.ref('rooms/' + roomCode).update({
-      round, armed: false, startTime, winner: null, ranking: null, judgedIndex: 0, finished: false,
+      round, armed: false, startTime, winner: null, ranking: null, judgedIndex: 0, finished: false, firstBuzzTime: null,
     }).then(() => {
       setTimeout(() => {
         db.ref('rooms/' + roomCode).once('value').then((s2) => {
@@ -665,7 +682,9 @@ document.getElementById('btnJoinRoom').onclick = () => {
     db.ref('rooms/' + roomCode).update(updates).then(() => {
       document.getElementById('playerInfo').textContent = `ルーム ${roomCode} / ${name} さん`;
       amJoined = true;
-      finishedNotifiedRound = -1;
+      correctNotifiedRound = -1;
+      wrongNotifiedRound = -1;
+      wrongNotifiedUpTo = -1;
       showScreen('player');
       listenPlayer();
       ownPlayerRef = db.ref(`rooms/${roomCode}/players/${myId}`);
@@ -681,6 +700,7 @@ document.getElementById('btnJoinRoom').onclick = () => {
 function handleKicked() {
   amJoined = false;
   clearArmTimer();
+  clearWindowTimer();
   scheduledStartTime = -1;
   localArmed = false;
   if (roomCode) db.ref('rooms/' + roomCode).off();
@@ -701,6 +721,7 @@ function listenPlayer() {
     if (data.round !== currentRound) {
       currentRound = data.round;
       myBuzzedRound = -1;
+      clearWindowTimer();
     }
     if (data.startTime !== scheduledStartTime) {
       scheduleLocalArm(data.startTime);
@@ -722,23 +743,37 @@ function updatePlayerUI() {
   const buzzBtn = document.getElementById('btnBuzz');
   const statusEl = document.getElementById('playerStatus');
   const ranking = data.ranking || [];
+  const judgedIndex = data.judgedIndex || 0;
 
-  if (data.finished && finishedNotifiedRound !== data.round) {
-    finishedNotifiedRound = data.round;
-    if (data.winner) { soundCorrect(); showEffect('correct'); }
-    else { soundWrong(); showEffect('wrong'); }
+  // 正解者本人にのみエフェクト
+  if (data.finished && data.winner && correctNotifiedRound !== data.round) {
+    correctNotifiedRound = data.round;
+    if (data.winner.id === myId) { soundCorrect(); showEffect('correct'); }
   }
+  // 不正解と判定された本人にのみエフェクト（ラウンドが変わったらリセット）
+  if (wrongNotifiedRound !== data.round) {
+    wrongNotifiedRound = data.round;
+    wrongNotifiedUpTo = -1;
+  }
+  for (let i = wrongNotifiedUpTo + 1; i < judgedIndex; i++) {
+    const entry = ranking[i];
+    if (entry && entry.id === myId) { soundWrong(); showEffect('wrong'); }
+  }
+  wrongNotifiedUpTo = judgedIndex - 1;
 
-  statusEl.className = 'status' + (data.finished && data.winner ? ' winner' : '');
+  statusEl.className = 'status' + (data.finished && data.winner && data.winner.id === myId ? ' winner' : '');
+
+  const myRank = ranking.findIndex(r => r.id === myId);
+  const alreadyBuzzed = myRank >= 0 || myBuzzedRound === currentRound;
+  const windowOpen = ranking.length > 0 && data.firstBuzzTime && (Date.now() - data.firstBuzzTime < BUZZ_WINDOW_MS);
+
   if (data.finished && data.winner) {
     statusEl.textContent = data.winner.id === myId ? '🎉 あなたが正解です！' : `${data.winner.name} が正解しました`;
     buzzBtn.disabled = true;
   } else if (data.finished && !data.winner) {
     statusEl.textContent = '😢 今回は正解者なし';
     buzzBtn.disabled = true;
-  } else if (ranking.length > 0) {
-    const judgedIndex = data.judgedIndex || 0;
-    const myRank = ranking.findIndex(r => r.id === myId);
+  } else if (alreadyBuzzed) {
     if (myRank === judgedIndex) {
       statusEl.textContent = '🙋 あなたの解答を判定中です…';
     } else if (myRank >= 0 && myRank < judgedIndex) {
@@ -746,11 +781,15 @@ function updatePlayerUI() {
     } else if (myRank > judgedIndex) {
       statusEl.textContent = '⏳ 順番を待っています…';
     } else {
-      statusEl.textContent = '🙋 判定中…結果をお待ちください';
+      statusEl.textContent = '送信しました…結果を待っています';
     }
     buzzBtn.disabled = true;
-  } else if (myBuzzedRound === currentRound) {
-    statusEl.textContent = '送信しました…結果を待っています';
+  } else if (windowOpen && localArmed) {
+    statusEl.textContent = '🟢 まだ押せます！';
+    buzzBtn.disabled = false;
+    scheduleWindowEnd(data.firstBuzzTime);
+  } else if (ranking.length > 0) {
+    statusEl.textContent = '⌛ 受付終了（今回は押せませんでした）';
     buzzBtn.disabled = true;
   } else if (localArmed && data.round > 0) {
     statusEl.textContent = '🟢 押せます！';
@@ -773,6 +812,7 @@ document.getElementById('btnBuzz').onclick = () => {
 document.getElementById('btnExit').onclick = () => {
   amJoined = false;
   clearArmTimer();
+  clearWindowTimer();
   scheduledStartTime = -1;
   localArmed = false;
   if (!roomCode) { showScreen('select'); return; }
