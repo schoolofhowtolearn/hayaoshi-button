@@ -133,14 +133,55 @@
   }
   .players-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 12px; min-height: 30px; }
   .player-chip {
-    padding: 6px 16px;
+    padding: 6px 10px 6px 16px;
     border-radius: 999px;
     font-size: 0.85em;
     font-weight: 900;
     color: #111;
     border: 2px solid #22223a;
     transform: rotate(-2deg);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
+  .kick-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid #22223a;
+    background: #fff;
+    color: #22223a;
+    font-size: 0.75em;
+    font-weight: 900;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+    transform: none;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .kick-btn:active { transform: scale(0.9); box-shadow: none; }
+  .effect-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .effect-overlay.show { opacity: 1; }
+  .effect-overlay.correct { background: rgba(46, 204, 113, 0.35); }
+  .effect-overlay.wrong { background: rgba(231, 76, 60, 0.35); }
+  .effect-emoji {
+    font-size: 6em;
+    font-weight: 900;
+    transform: scale(0.6);
+    transition: transform 0.25s cubic-bezier(.34,1.56,.64,1);
+  }
+  .effect-overlay.show .effect-emoji { transform: scale(1.1); }
   .status { font-weight: 900; text-align: center; min-height: 1.6em; margin: 8px 0; color: #3a3a55; }
   .status.winner {
     color: #FF3DAE; font-size: 1.3em; font-style: italic;
@@ -231,6 +272,8 @@
 <div class="splat" style="top:20%;right:-40px;width:120px;height:120px;background:#FFE600;transform:rotate(60deg);opacity:.45;"></div>
 <div class="splat" style="bottom:15%;left:-30px;width:100px;height:100px;background:#FF3DAE;transform:rotate(-35deg);opacity:.45;"></div>
 
+<div class="effect-overlay" id="effectOverlay"><div class="effect-emoji" id="effectEmoji"></div></div>
+
 <!-- 役割選択 -->
 <div class="card" id="screen-select">
   <h1 class="resp-title">早押しボタン</h1>
@@ -269,6 +312,8 @@
   <div class="panel" id="hostScoresPanel">
     <div id="hostScores"></div>
   </div>
+
+  <button class="exit-link" id="btnHostExit">← 退出する（ルームを終了する）</button>
 </div>
 
 <!-- プレイヤー画面 -->
@@ -318,8 +363,18 @@ function beep(freq, dur, type, delay) {
 }
 function soundBuzz() { beep(1300, 140, 'square'); }
 function soundDing() { beep(1700, 100, 'sine'); }
-function soundCorrect() { beep(880, 120, 'sine'); beep(1320, 160, 'sine', 0.12); }
-function soundWrong() { beep(220, 280, 'sawtooth'); }
+function soundCorrect() {
+  // ピンポンピンポンピンポン
+  for (let i = 0; i < 3; i++) {
+    beep(988, 130, 'sine', i * 0.32);
+    beep(740, 160, 'sine', i * 0.32 + 0.15);
+  }
+}
+function soundWrong() {
+  // ブッブー
+  beep(160, 260, 'sawtooth', 0);
+  beep(130, 380, 'sawtooth', 0.3);
+}
 
 // Firebase 初期化
 firebase.initializeApp(FIREBASE_CONFIG);
@@ -356,6 +411,9 @@ function scheduleLocalArm(startTime) {
   if (!localArmed) armTimerId = setInterval(check, 30);
 }
 let lastPlayerData = null;
+let amJoined = false;
+let ownPlayerRef = null;
+let finishedNotifiedRound = -1;
 
 const screens = {
   select: document.getElementById('screen-select'),
@@ -437,7 +495,7 @@ function listenHost() {
     } else {
       playersDiv.innerHTML = ids.map((id, i) => {
         const isWinner = data.winner && data.winner.id === id;
-        return `<span class="player-chip" style="background:${COLORS[i % COLORS.length]};${isWinner ? 'outline:3px solid #fff;' : ''}">${players[id]}</span>`;
+        return `<span class="player-chip" style="background:${COLORS[i % COLORS.length]};${isWinner ? 'outline:3px solid #fff;' : ''}">${players[id]}<button class="kick-btn" data-id="${id}" title="退出させる">×</button></span>`;
       }).join('');
     }
 
@@ -497,8 +555,38 @@ function watchBuzzes(round) {
   });
 }
 
-document.getElementById('btnCorrect').onclick = () => judge(true);
+document.getElementById('hostPlayers').addEventListener('click', (e) => {
+  const btn = e.target.closest('.kick-btn');
+  if (!btn) return;
+  const id = btn.getAttribute('data-id');
+  if (!id || !roomCode) return;
+  db.ref(`rooms/${roomCode}/players/${id}`).remove();
+  db.ref(`rooms/${roomCode}/scores/${id}`).remove();
+});
+
+document.getElementById('btnHostExit').onclick = () => {
+  if (!roomCode) { showScreen('select'); return; }
+  db.ref('rooms/' + roomCode).off();
+  if (currentBuzzRef) currentBuzzRef.off();
+  const codeToRemove = roomCode;
+  roomCode = '';
+  db.ref('rooms/' + codeToRemove).remove();
+  showScreen('select');
+};
+
+function showEffect(type) {
+  const overlay = document.getElementById('effectOverlay');
+  const emoji = document.getElementById('effectEmoji');
+  overlay.className = 'effect-overlay ' + type;
+  emoji.textContent = type === 'correct' ? '⭕' : '❌';
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  clearTimeout(overlay._hideTimer);
+  overlay._hideTimer = setTimeout(() => {
+    overlay.classList.remove('show');
+  }, 1100);
+}
 document.getElementById('btnWrong').onclick = () => judge(false);
+document.getElementById('btnCorrect').onclick = () => judge(true);
 
 function judge(isCorrect) {
   db.ref('rooms/' + roomCode).once('value').then((s) => {
@@ -576,11 +664,32 @@ document.getElementById('btnJoinRoom').onclick = () => {
     updates[`scores/${myId}`] = { correct: 0, wrong: 0 };
     db.ref('rooms/' + roomCode).update(updates).then(() => {
       document.getElementById('playerInfo').textContent = `ルーム ${roomCode} / ${name} さん`;
+      amJoined = true;
+      finishedNotifiedRound = -1;
       showScreen('player');
       listenPlayer();
+      ownPlayerRef = db.ref(`rooms/${roomCode}/players/${myId}`);
+      ownPlayerRef.on('value', (psnap) => {
+        if (psnap.val() === null && amJoined) {
+          handleKicked();
+        }
+      });
     });
   }).catch(() => showError('ルームの取得に失敗しました'));
 };
+
+function handleKicked() {
+  amJoined = false;
+  clearArmTimer();
+  scheduledStartTime = -1;
+  localArmed = false;
+  if (roomCode) db.ref('rooms/' + roomCode).off();
+  if (ownPlayerRef) { ownPlayerRef.off(); ownPlayerRef = null; }
+  roomCode = '';
+  myBuzzedRound = -1;
+  showScreen('select');
+  showError('ホストによってルームから退出させられました');
+}
 
 function listenPlayer() {
   const roomRef = db.ref('rooms/' + roomCode);
@@ -613,6 +722,12 @@ function updatePlayerUI() {
   const buzzBtn = document.getElementById('btnBuzz');
   const statusEl = document.getElementById('playerStatus');
   const ranking = data.ranking || [];
+
+  if (data.finished && finishedNotifiedRound !== data.round) {
+    finishedNotifiedRound = data.round;
+    if (data.winner) { soundCorrect(); showEffect('correct'); }
+    else { soundWrong(); showEffect('wrong'); }
+  }
 
   statusEl.className = 'status' + (data.finished && data.winner ? ' winner' : '');
   if (data.finished && data.winner) {
@@ -656,10 +771,12 @@ document.getElementById('btnBuzz').onclick = () => {
 };
 
 document.getElementById('btnExit').onclick = () => {
+  amJoined = false;
   clearArmTimer();
   scheduledStartTime = -1;
   localArmed = false;
   if (!roomCode) { showScreen('select'); return; }
+  if (ownPlayerRef) { ownPlayerRef.off(); ownPlayerRef = null; }
   db.ref(`rooms/${roomCode}/players/${myId}`).remove();
   db.ref(`rooms/${roomCode}/scores/${myId}`).remove();
   db.ref('rooms/' + roomCode).off();
