@@ -381,7 +381,7 @@ function getAudioCtx() {
   }
   return audioCtx;
 }
-function beep(freq, dur, type, delay) {
+function beep(freq, dur, type, delay, vol) {
   const ctx = getAudioCtx();
   if (!ctx) return;
   const t0 = ctx.currentTime + (delay || 0);
@@ -389,25 +389,29 @@ function beep(freq, dur, type, delay) {
   const g = ctx.createGain();
   o.type = type || 'sine';
   o.frequency.value = freq;
-  g.gain.value = 0.22;
+  g.gain.value = vol || 0.45;
   o.connect(g); g.connect(ctx.destination);
   o.start(t0);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur / 1000);
   o.stop(t0 + dur / 1000 + 0.02);
 }
-function soundBuzz() { beep(1300, 140, 'square'); }
-function soundDing() { beep(1700, 100, 'sine'); }
+// 押したときの音「ピンポン」約0.5秒
+function soundBuzz() {
+  beep(988, 230, 'sine', 0);
+  beep(740, 250, 'sine', 0.23);
+}
+function soundDing() { beep(1700, 100, 'sine', 0, 0.35); }
+// 正解音「ピンポンピンポン」約1秒
 function soundCorrect() {
-  // ピンポンピンポンピンポン
-  for (let i = 0; i < 3; i++) {
-    beep(988, 130, 'sine', i * 0.32);
-    beep(740, 160, 'sine', i * 0.32 + 0.15);
+  for (let i = 0; i < 2; i++) {
+    beep(988, 220, 'sine', i * 0.5);
+    beep(740, 240, 'sine', i * 0.5 + 0.22);
   }
 }
+// 不正解音「ブッブー」約1秒
 function soundWrong() {
-  // ブッブー
-  beep(160, 260, 'sawtooth', 0);
-  beep(130, 380, 'sawtooth', 0.3);
+  beep(150, 460, 'sawtooth', 0);
+  beep(120, 500, 'sawtooth', 0.48);
 }
 
 // Firebase 初期化
