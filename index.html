@@ -395,6 +395,7 @@
 
 <script>
 const COLORS = ['#FF6B6B','#4ecdc4','#ffd166','#6a89cc','#a29bfe','#55efc4','#fd79a8','#fab1a0'];
+function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function genCode() { return String(Math.floor(1000 + Math.random() * 9000)); }
 function genId() { return Math.random().toString(36).slice(2, 10); }
 
@@ -508,7 +509,7 @@ function renderRanking(containerId, panelId, data) {
     } else if (i === judgedIndex) {
       cls += ' rank-current';
     }
-    return `<div class="${cls}"><span class="rank-num">${i + 1}</span><span class="rank-name">${r.name}</span><span class="rank-time">${sec}秒</span></div>`;
+    return `<div class="${cls}"><span class="rank-num">${i + 1}</span><span class="rank-name">${escapeHtml(r.name)}</span><span class="rank-time">${sec}秒</span></div>`;
   }).join('');
 }
 
@@ -525,7 +526,7 @@ function renderScores(containerId, data) {
   }));
   list.sort((a, b) => (b.correct - a.correct) || (a.wrong - b.wrong));
   el.innerHTML = '<div class="panel-title">🏆 成績ランキング</div>' + list.map((p, i) =>
-    `<div class="score-item"><span class="score-rank">${i + 1}</span><span class="score-name">${p.name}</span><span class="score-stat">○<span class="ok-num">${p.correct}</span>　✕<span class="ng-num">${p.wrong}</span></span></div>`
+    `<div class="score-item"><span class="score-rank">${i + 1}</span><span class="score-name">${escapeHtml(p.name)}</span><span class="score-stat">○<span class="ok-num">${p.correct}</span>　✕<span class="ng-num">${p.wrong}</span></span></div>`
   ).join('');
 }
 
@@ -557,7 +558,7 @@ function listenHost() {
     } else {
       playersDiv.innerHTML = ids.map((id, i) => {
         const isWinner = data.winner && data.winner.id === id;
-        return `<span class="player-chip" style="background:${COLORS[i % COLORS.length]};${isWinner ? 'outline:3px solid #fff;' : ''}">${players[id]}<button class="kick-btn" data-id="${id}" title="退出させる">×</button></span>`;
+        return `<span class="player-chip" style="background:${COLORS[i % COLORS.length]};${isWinner ? 'outline:3px solid #fff;' : ''}">${escapeHtml(players[id])}<button class="kick-btn" data-id="${escapeHtml(id)}" title="退出させる">×</button></span>`;
       }).join('');
     }
 
